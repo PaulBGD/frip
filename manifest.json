@@ -1,0 +1,25 @@
+{
+  "name": "FigmaRipper",
+  "version": "1.0",
+  "description": "yay",
+  "manifest_version": 2,
+  "permissions": [
+    "debugger"
+  ],
+  "background": {
+    "scripts": ["background.js"]
+  },
+  "browser_action": {
+    "default_title": "Rip from Figma"
+  },
+  "web_accessible_resources": [
+    "actual-script.js"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["https://www.figma.com/proto/**/**"],
+      "js": ["inject-script.js"],
+      "run_at": "document_start"
+    }
+  ]
+}
