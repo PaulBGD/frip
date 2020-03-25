@@ -16,19 +16,44 @@
 
     function recordFrame(canvas) {
         const gl = canvas.getContext("webgl");
-        const pixels = new Uint8Array(gl.drawingBufferWidth * gl.drawingBufferHeight * 4);
-        gl.readPixels(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+        // const pixels = new Uint8Array(gl.drawingBufferWidth * gl.drawingBufferHeight * 4);
+        // gl.readPixels(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+        const newCanvas = document.createElement("canvas");
+        newCanvas.width = canvas.width;
+        newCanvas.height = canvas.height;
+        newCanvas.getContext("2d").drawImage(canvas, 0, 0);
+
+        // const data = newCanvas.toDataURL("image/png");
+        // console.log("data url", data);
+        //
+        // const link = document.createElement("a");
+        // link.setAttribute("download", "slides.png");
+        // link.setAttribute("href", data.replace("image/png", "image/octet-stream"));
+        // link.click();
 
         return {
             width: gl.drawingBufferWidth,
             height: gl.drawingBufferHeight,
-            pixels,
+            // pixels,
+            canvas: newCanvas,
         };
     }
 
+    const getContext = HTMLCanvasElement.prototype.getContext;
+
+    HTMLCanvasElement.prototype.getContext = function (context, opts = {}) {
+        opts.preserveDrawingBuffer = true;
+        return getContext.call(this, context, opts);
+    };
+
     window.requestAnimationFrame = function () {
+        const canvas = document.querySelector("canvas");
+        if (canvas) {
+            canvas.getContext("webgl", {
+                preserveDrawingBuffer: false,
+            });
+        }
         if (recording) {
-            const canvas = document.querySelector("canvas");
             if (canvas) {
                 if (!startedRecording) {
                     if (canvas.width === 1840 && canvas.height === 1036) {
@@ -40,9 +65,7 @@
                 }
 
                 if (startedRecording) {
-                    console.time("record");
                     currentArray.push(recordFrame(canvas));
-                    console.timeEnd("record");
                 }
             }
         }
@@ -83,21 +106,28 @@
         //     document.body.removeChild(link);
         // }
 
-        async function removeDuplicates(array) {
+        function removeDuplicates(array) {
             if (!array.length) {
                 return [];
             }
+            const {canvas} = array[0];
+            const ctx = canvas.getContext("2d");
             const unique = [array[0]];
+            let previousImageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
             mainLoop: for (let i = 1; i < array.length; i++) {
-                const current = array[i].pixels;
-                const previous = array[i - 1].pixels;
+                const {canvas} = array[i];
+                const ctx = canvas.getContext("2d");
+                const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
 
-                for (let j = 0; j < previous.byteLength; j++) {
-                    if (previous[j] !== current[j]) {
+                for (let j = 0; j < previousImageData.data.byteLength; j++) {
+                    if (previousImageData.data[j] !== imageData.data[j]) {
                         unique.push(array[i]);
+
+                        previousImageData = imageData;
                         continue mainLoop;
                     }
                 }
+                previousImageData = imageData;
             }
             return unique;
         }
@@ -112,23 +142,65 @@
                 currentFrames = currentArray;
             }
 
-            recording = false;
-            console.log("processing", currentSlide);
-            removeDuplicates(currentFrames)
-                .then(uniq => {
-                    recording = true;
-                    currentArray = [];
-                    framesPerSlide[currentSlide] = uniq;
+            currentArray = [];
+            framesPerSlide[currentSlide] = removeDuplicates(currentFrames);
 
-                    if (currentSlide < total) {
-                        goForward();
-                        setTimeout(step, 400);
-                    } else {
-                        console.log(framesPerSlide);
-                        recording = false;
-                        console.log("done!");
-                    }
+            if (currentSlide < total) {
+                goForward();
+                setTimeout(step, 400);
+            } else {
+                recording = false;
+                const totalSlides = Object.values(framesPerSlide).reduce((num, arr) => arr.length + num, 0);
+                console.log("We have", {totalSlides});
+                // const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+
+                // let i = 0;
+                // Object.values(framesPerSlide).forEach(frames => {
+                //     for (const {width, height, pixels} of frames) {
+                //         for (let j = 0; j < pixels.byteLength; j++) {
+                //             imageData.data[i++] = pixels[j];
+                //         }
+                //         console.log("added frame, at pixel count:", i);
+                //     }
+                // });
+
+                const split = window.location.pathname.split("/");
+                const pageName = split[split.length - 1];
+                const json = JSON.stringify({
+                    pages: Object.values(framesPerSlide).map((val, i) => ({
+                        slides: val.length,
+                        file: `${pageName}-${i}.png`,
+                    })),
+                    width: Object.values(framesPerSlide)[0][0].width,
+                    height: Object.values(framesPerSlide)[0][0].height,
                 });
+                const link = document.createElement("a");
+                link.setAttribute("download", `${pageName}.json`);
+                link.setAttribute("href", `data:text/json;charset=utf-8,${encodeURIComponent(json)}`);
+                link.click();
+
+                Object.values(framesPerSlide).forEach((frames, index) => {
+                    const canvas = document.createElement("canvas");
+                    canvas.width = Object.values(framesPerSlide)[0][0].width;
+                    canvas.height = Object.values(framesPerSlide)[0][0].height * frames.length;
+                    const ctx = canvas.getContext("2d");
+                    let i = 0;
+
+                    for (const {canvas} of frames) {
+                        ctx.drawImage(canvas, 0, canvas.height * (i++));
+                    }
+
+                    canvas.toBlob(blob => {
+                        const link = document.createElement("a");
+                        link.setAttribute("download", `${pageName}-${index}.png`);
+                        const url = window.URL.createObjectURL(blob);
+                        link.setAttribute("href", url);
+                        link.click();
+                        window.URL.revokeObjectURL(url);
+                    }, "image/png");
+                });
+
+            }
         }
 
         step();
